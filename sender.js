@@ -11,7 +11,7 @@ dotenv.config()
 
   try {
          const parameters = {
-    Names: ['/Dev-lambda-EZ-API/API_KEY','/Dev-lambda-EZ-API/sender-api-url','/Dev-lambda-EZ-API/sqs-url'] 
+    Names: ['/Development/Lambda/API_KEY','/Development/Lambda/sender-api-url','/Development/Lambda/sqs-url']
     
   };
     const response = await ssm.getParameters(parameters).promise();
