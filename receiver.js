@@ -31,4 +31,4 @@ module.exports.sqsReciveHandler = async (event) => {
 };
 
 
-//v1.1
+//v1.3
