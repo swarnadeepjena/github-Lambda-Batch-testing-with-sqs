@@ -1,0 +1,328 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  Env:
+    Description: Environment Name 
+    Type: String
+    AllowedValues:
+      - Prod
+      - Staging 
+      - Dev
+
+  LayerARN: 
+    Type: String
+    Description: The ARN of the existing Lambda layer.
+    Default: arn:aws:lambda:ap-south-1:778066233234:layer:layer:1
+
+  APIKey: 
+    Type: String
+    Default: Testing
+    Description: The API key value.
+
+  APIUrlForSender:
+    Type: String
+    Default: https://admin.dev.goodvets.com/api/evGvSync/getActiveLocations
+    Description: API URL for sender
+
+  APIUrlForReceiver:
+    Type: String
+    Default: https://admin.dev.goodvets.com/api/evGvSync/
+    Description: API URL for receiver 
+
+  Senderlambda:
+    Type: String
+    Default: Sender-EZ-API-Batch-Process
+    Description: Name of sender-Lambda
+
+  Receiverlambda:
+    Type: String
+    Default: Receiver-EZ-API-Batch-Process
+    Description: Name of Receiver-Lambda
+
+  SQSName:
+    Type: String
+    Default: SQS-Batch-Precess
+    Description: Name of SQS
+
+
+Resources:
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub Lambda-Role-batch-Process
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogsFullAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                Resource: '*'
+        - PolicyName: AWSLambdaExecute
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:GetFunction
+                  - lambda:ListFunctions
+                Resource: '*'
+        - PolicyName: AmazonSQSFullAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:*
+                Resource: '*'
+        - PolicyName: AWSLambdaBasicExecutionRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:*
+                Resource: '*'
+        - PolicyName: AWSLambdaSQSQueueExecutionRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:GetFunction
+                  - lambda:ListFunctions
+                  - sqs:*
+                Resource: '*'
+
+        - PolicyName: EventBridgeTestTaskPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: "*"
+
+        - PolicyName: SSMParameterStoreAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: 
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Dev-lambda-EZ-API*'
+
+      
+  LambdaFunction1:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Senderlambda}-${Env}"
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: nodejs18.x
+      Handler: sender.sqsSendHandler
+      Timeout: 900
+      Layers:
+        - !Ref LayerARN
+      Code:
+        ZipFile: |
+            const AWS = require("aws-sdk");
+            const axios = require("axios");
+            const sqs = new AWS.SQS();
+            const dotenv = require("dotenv")
+            const ssm = new AWS.SSM();
+            dotenv.config()
+
+            module.exports.sqsSendHandler = async (event) => {
+
+
+
+              try {
+                    const parameters = {
+                Names: ['/Dev-lambda-EZ-API/API_KEY','/Dev-lambda-EZ-API/sender-api-url','/Dev-lambda-EZ-API/sqs-url'] 
+                
+              };
+                const response = await ssm.getParameters(parameters).promise();
+                const values = response.Parameters.map(parameter => parameter.Value);
+                console.log(values)
+                let params = {};
+                const config = {
+                  headers: { apikey: values[0] },
+                };
+                const url = values[1];
+                const locationList = await axios.get(url, config);
+                if (locationList.data.response.length) {
+                const messageArraySQS = locationList.data.response.map((element) => {
+                    params = {
+                      MessageBody: element.idLocation,
+                      QueueUrl: values[2],
+                    };
+                    return sqs.sendMessage(params).promise();
+                    //console.log("Message sent:", data.MessageId);
+                  });
+                const returnData = await Promise.all(messageArraySQS);
+                console.log(returnData);
+                  //return data.MessageId;
+                }
+              } catch (error) {
+                console.error("Error sending message:", error);
+                throw error;
+              }
+            };
+      Tags:
+        - Key: Environment  
+          Value: 
+             !Ref Env 
+        - Key: Name
+          Value: !Sub "${Senderlambda}-${Env}"
+
+  LambdaFunction2:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Receiverlambda}-${Env}"
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: nodejs18.x
+      Handler: receiver.sqsReciveHandler
+      Timeout: 900
+      Layers:
+        - !Ref LayerARN
+      Code:
+        ZipFile: |
+            const AWS = require("aws-sdk");
+            const { default: axios } = require("axios");
+            const sqs = new AWS.SQS();
+            const ssm = new AWS.SSM();
+
+            module.exports.sqsReciveHandler = async (event) => {
+              console.log(event);
+              try {
+                const parameters = {
+                Names: ['/Dev-lambda-EZ-API/API_KEY','/Dev-lambda-EZ-API/receiver-api-url'] 
+                
+              };
+                const response = await ssm.getParameters(parameters).promise();
+                const values = response.Parameters.map(parameter => parameter.Value);
+                console.log(values)
+                const config = {
+                  headers: { apikey: values[0] },
+                };
+                if (event.Records.length) {
+                  const syncLocationPromise = event.Records.map((element) => {
+                    const url =  values[1]+element.body
+                    return axios.post(url, {}, config);
+                  });
+                  const returnData = await Promise.all(syncLocationPromise);
+                  console.log(returnData);
+                }
+              } catch (err) {
+                console.error("Error receiving messages:", err);
+                throw err;
+              }
+            };
+      Tags:
+        - Key: Environment  
+          Value: 
+             !Ref Env 
+        - Key: Name
+          Value: !Sub "${Receiverlambda}-${Env}"
+
+  LambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      Enabled: true
+      EventSourceArn: !GetAtt SQSQueue.Arn
+      FunctionName: !GetAtt LambdaFunction2.Arn
+
+  SQSQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      DelaySeconds: 0
+      VisibilityTimeout: 900
+      QueueName: !Sub "${SQSName}-${Env}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${SQSName}-${Env}"
+        - Key: Environment
+          Value: !Ref Env
+
+  SQSQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref SQSQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 'SQS:*'
+            Resource: !GetAtt SQSQueue.Arn
+
+
+  ScheduledEvent:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: ScheduledEvent-Batching
+      Description: "EventBridge Rule"
+      ScheduleExpression: cron(0 17 * * ? *)  # At every 5.00 pm (UTC) of every day 
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt LambdaFunction1.Arn
+          Id: "TargetLambdaFunction1"
+
+  #permission to event bridge
+
+  EventBridgePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction1
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledEvent.Arn
+
+
+Outputs:
+  LambdaFunction1Arn:
+    Description: ARN of Lambda Function 1
+    Value: !GetAtt LambdaFunction1.Arn
+
+  LambdaFunction2Arn:
+    Description: ARN of Lambda Function 2
+    Value: !GetAtt LambdaFunction2.Arn
+
+  SQSQueueUrl:
+    Description: URL of SQS Queue
+    Value: !Ref SQSQueue
+
+  LambdaRoleArn:
+    Description: ARN of IAM role
+    Value: !Ref LambdaRole
+
+  ScheduledEventArn:
+    Description: ARN of EventBridge
+    Value: !Ref ScheduledEvent
+
+  
+
+
+
+
+
+
+
+      
+            

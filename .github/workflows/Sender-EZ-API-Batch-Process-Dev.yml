@@ -1,0 +1,90 @@
+#For the provider URL: Use https://token.actions.githubusercontent.com
+#For the "Audience": Use sts.amazonaws.com 
+name: Deploye on Sender-EZ-API-Batch-Process-Dev
+on:
+  push:
+    branches:
+      - master 
+env:
+  AWS_REGION : "ap-south-1"  
+  Lambda_Function_Name: Sender-EZ-API-Batch-Process-Dev
+  ENVIRONMENT: development 
+
+
+permissions:
+      id-token: write   # This is required for requesting the JWT
+      contents: read    # This is required for actions/checkout
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::778066233234:role/GitHubAction_AssumeRoleWithAction
+          role-session-name: samplerolesession
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS cli configuration
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set region ${{ env.AWS_REGION }}  # Replace with your desired region
+
+      - name: Update AWS CLI
+        run: |
+          curl "https://d1vvhvl2y92vvt.cloudfront.net/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+
+
+      - name: Install dependencies
+        run: npm install
+
+
+      - name: confirm the Lambda function details
+        run: |
+          aws lambda get-function --function-name ${{ env.Lambda_Function_Name }}  --region ${{ env.AWS_REGION }} --output json
+    
+
+      - name: Deploy to Lambda
+        run: |
+         zip -r9 sender-code.zip sender.js  
+         aws lambda update-function-code --function-name ${{ env.Lambda_Function_Name }}  --zip-file fileb://sender-code.zip 
+         rm sender-code.zip
+         
+
+      - name: Clean up
+        run: npm install
+
+        #  --role "arn:aws:iam::778066233234:role/cf-LambdaRole-OP2ZE3AFLNVR"
+        #  aws lambda create-function --function-name lambda-example --runtime nodejs14.x --zip-file fileb://lambda.zip --handler index.handler --environment file://environment.json --role "arn:aws:iam::778066233234:role/lambda-role11"
+        #  zip -r9 lambda.zip index.js  # Replace with the appropriate file name if needed \
+        #  aws lambda update-function-code --function-name LambdaFunction --zip-file fileb://lambda.zip 
+
+
+
+
+        #  - name: Deploy to Lambda
+        #  run: |
+        #   zip -r9 lambda.zip index.js
+        #   if aws lambda get-function --function-name MyLambdaFunction2 >/dev/null 2>&1; then
+        #      aws lambda update-function-code --function-name MyLambdaFunction2 --zip-file fileb://lambda.zip
+        #   else
+        #      aws lambda create-function --function-name MyLambdaFunction2 \
+        #      --runtime nodejs14.x \
+        #      --handler index.handler \
+        #      --role arn:aws:iam::778066233234:role/cf-LambdaRole-OP2ZE3AFLNVR \
+        #      --zip-file fileb://lambda.zip
+        #   fi
+        #   rm lambda.zip
+        #de,o-2
