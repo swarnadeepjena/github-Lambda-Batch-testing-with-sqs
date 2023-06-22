@@ -7,7 +7,7 @@ module.exports.sqsReciveHandler = async (event) => {
   console.log(event);
   try {
     const parameters = {
-    Names: ['/Development/Lambda/API_KEY','//Development/Lambda/receiver-api-url'] 
+    Names: ['/Development/Lambda/API_KEY','/Development/Lambda/receiver-api-url'] 
     
   };
     const response = await ssm.getParameters(parameters).promise();
